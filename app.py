@@ -10,22 +10,32 @@ app = Flask(__name__)
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
 
+def normalize_linebreaks(text):
+    # Supprime les sauts de ligne simples (pas doubles), typiques des coupures de ligne automatiques
+    text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+    text = re.sub(r' {2,}', ' ', text)  # nettoyage des doubles espaces
+    return text
+
 def extract_parts(text):
     # Nettoyage de base
     text = text.strip().replace('\r', '')
     lines = text.split('\n')
 
-    # Retire les lignes décoratives (comme "*************")
+    # Supprimer les lignes décoratives
     lines = [line for line in lines if not re.fullmatch(r'[*\s\-_=~#]+', line.strip())]
 
-    # Reprendre le titre et la basmala après nettoyage
+    # Extraire titre et basmala AVANT normalisation
     title = lines[0].strip() if len(lines) > 0 else ""
-    basmala = lines[1].strip() if len(lines) > 1 else ""
+    basmala = lines[2].strip() if len(lines) > 2 else ""
 
-    # Reste du contenu
-    content = "\n".join(lines[2:])
+    # Reconstituer le reste du contenu
+    content_lines = lines[2:]
+    content = "\n".join(content_lines)
 
-    # Supprimer ce qui vient après du contenu inutile
+    # Nettoyer les retours à la ligne automatiques uniquement sur le reste
+    content = normalize_linebreaks(content)
+
+    # Supprimer les lignes parasites
     truncation_keywords = [
         "Retrouvez le hadith du jour",
         "www.hadithdujour.com",
@@ -37,19 +47,19 @@ def extract_parts(text):
     for kw in truncation_keywords:
         content = content.split(kw)[0]
 
-    # Identifier le hadith en arabe
+    # Détection de l'arabe
     arabic_pattern = re.compile(r'[\u0600-\u06FF]')
-    lines_cleaned = content.split('\n')
+    content_lines = content.split('\n')
 
     arabic_start_index = None
-    for i, line in enumerate(lines_cleaned):
+    for i, line in enumerate(content_lines):
         if arabic_pattern.search(line):
             arabic_start_index = i
             break
 
     if arabic_start_index is not None:
-        hadith_fr = "\n".join(lines_cleaned[:arabic_start_index]).strip()
-        hadith_ar = "\n".join(lines_cleaned[arabic_start_index:]).strip()
+        hadith_fr = "\n".join(content_lines[:arabic_start_index]).strip()
+        hadith_ar = "\n".join(content_lines[arabic_start_index:]).strip()
     else:
         hadith_fr = content.strip()
         hadith_ar = ""
