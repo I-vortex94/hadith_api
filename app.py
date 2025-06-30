@@ -1,63 +1,72 @@
-from flask import Flask, jsonify
 import imaplib
 import email
-from email.header import decode_header
 import os
+from flask import Flask, jsonify
+from email.header import decode_header
 
 app = Flask(__name__)
 
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
-IMAP_SERVER = "imap.gmail.com"
+EMAIL_USER = os.environ.get("EMAIL_USER")
+EMAIL_PASS = os.environ.get("EMAIL_PASS")
 
-def get_latest_email():
-    mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-    mail.login(EMAIL_USER, EMAIL_PASS)
-    mail.select("inbox")
+def clean_hadith(body):
+    # Ne garder que la partie utile : on coupe à la mention "Retrouvez le hadith"
+    if "Retrouvez le hadith" in body:
+        body = body.split("Retrouvez le hadith")[0]
 
-    # Obtenir le dernier email
-    status, data = mail.search(None, 'ALL')
-    mail_ids = data[0].split()
-    latest_id = mail_ids[-1]
+    # Supprimer les double-astérisques ** qui encadrent parfois des titres
+    body = body.replace("**", "")
 
-    status, data = mail.fetch(latest_id, '(RFC822)')
-    raw_email = data[0][1]
-    msg = email.message_from_bytes(raw_email)
+    # Supprimer les espaces superflus
+    return body.strip()
 
-    # Décodage sujet
-    subject, encoding = decode_header(msg["Subject"])[0]
-    if isinstance(subject, bytes):
-        subject = subject.decode(encoding or "utf-8", errors="ignore")
+def get_latest_email_content():
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com")
+        imap.login(EMAIL_USER, EMAIL_PASS)
+        imap.select("inbox")
 
-    from_ = msg.get("From")
-    to_ = msg.get("To")
-    date_ = msg.get("Date")
+        status, messages = imap.search(None, "ALL")
+        if status != "OK":
+            return None
 
-    # Lecture du corps
-    body = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain" and not part.get("Content-Disposition"):
-                body = part.get_payload(decode=True).decode(errors="ignore")
-                break
-    else:
-        body = msg.get_payload(decode=True).decode(errors="ignore")
+        latest_email_id = messages[0].split()[-1]
+        _, msg_data = imap.fetch(latest_email_id, "(RFC822)")
 
-    return {
-        "from": from_,
-        "to": to_,
-        "subject": subject,
-        "date": date_,
-        "body": body.strip()
-    }
+        for response_part in msg_data:
+            if isinstance(response_part, tuple):
+                msg = email.message_from_bytes(response_part[1])
+
+                subject, encoding = decode_header(msg["Subject"])[0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode(encoding or "utf-8")
+
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        if content_type == "text/plain":
+                            body = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8")
+                            break
+                else:
+                    body = msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8")
+
+                return {
+                    "subject": subject.strip(),
+                    "body": clean_hadith(body)
+                }
+
+        imap.logout()
+
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.route("/email", methods=["GET"])
-def email_route():
-    try:
-        return jsonify(get_latest_email())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+def get_email():
+    content = get_latest_email_content()
+    if not content:
+        return jsonify({"error": "Aucun message trouvé."}), 404
+    return jsonify(content)
 
 if __name__ == "__main__":
-    import os
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(debug=True)
