@@ -2,7 +2,7 @@ def extract_parts(text):
     text = text.strip().replace('\r', '')
     lines = text.split('\n')
 
-    # Supprime lignes décoratives
+    # Supprime les lignes décoratives comme *********
     lines = [line for line in lines if not re.fullmatch(r'[*\s\-_=~#]+', line.strip())]
 
     title = lines[0].strip() if len(lines) > 0 else ""
